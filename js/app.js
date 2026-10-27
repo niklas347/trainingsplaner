@@ -179,6 +179,8 @@
     importFile() { fileInput.click(); },
   };
 
+  // Import führt über die Kennung (id) zusammen: Vorhandene Übungen werden aktualisiert,
+  // wenn die importierte Version neuer ist – sonst übersprungen. So entstehen keine Doppelten.
   fileInput.addEventListener('change', async () => {
     const file = fileInput.files[0];
     fileInput.value = '';
@@ -189,16 +191,35 @@
       alert('Die Datei konnte nicht geladen werden. Ist es eine Übung oder ein Backup aus dem Trainingsplaner (.json)?');
       return;
     }
-    const ids = new Set(library.drills.map(d => d.id).concat(state.id));
-    drills.forEach(d => { if (ids.has(d.id)) d.id = newId(); ids.add(d.id); library.drills.push(d); });
-    persist();
-    if (drills.length === 1) {
-      openDrill(drills[0]);
-      libraryView.close();
-    } else {
-      libraryView.render();
-      alert(`${drills.length} Übungen importiert.`);
+
+    persist();   // geöffnete Übung sichern, damit ihr Änderungsdatum stimmt
+    const added = [], updated = [], kept = [];
+    let openReplaced = null;
+    for (const d of drills) {
+      const idx = library.drills.findIndex(x => x.id === d.id);
+      if (idx < 0) {
+        library.drills.push(d);
+        added.push(d);
+      } else if (d.updated > library.drills[idx].updated) {
+        library.drills[idx] = d;
+        updated.push(d);
+        if (d.id === state.id) openReplaced = d;
+      } else {
+        kept.push(d);
+      }
     }
+    if (openReplaced) openDrill(openReplaced, false); else persist();
+
+    if (drills.length === 1) {
+      if (kept.length) { alert('Diese Übung ist hier schon auf dem neuesten Stand – nichts geändert.'); return; }
+      if (drills[0].id !== state.id) openDrill(drills[0]);
+      libraryView.close();
+      if (updated.length) alert('Übung aktualisiert (neuere Version importiert).');
+      return;
+    }
+    libraryView.render();
+    alert(`Import abgeschlossen:\n• ${added.length} neu hinzugefügt\n• ${updated.length} aktualisiert (neuere Version)\n` +
+      `• ${kept.length} übersprungen (hier schon gleich oder neuer)`);
   });
 
   /* ---------- Darstellung ---------- */
