@@ -2,11 +2,11 @@
    Strategie: erst Netz (immer aktuell), ohne Netz die gespeicherte Version.
    Bei neuen Dateien: Liste ergänzen und VERSION erhöhen. */
 
-const VERSION = 'v3';
+const VERSION = 'v4';
 const CACHE = `trainingsplaner-${VERSION}`;
 const FILES = [
   './', 'index.html', 'manifest.json', 'css/style.css',
-  'js/fields.js', 'js/items.js', 'js/icons.js', 'js/steps.js', 'js/library.js', 'js/app.js',
+  'js/fields.js', 'js/items.js', 'js/icons.js', 'js/steps.js', 'js/library.js', 'js/trainings.js', 'js/app.js',
   'icons/icon.svg', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png',
 ];
 

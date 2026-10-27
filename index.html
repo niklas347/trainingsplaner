@@ -28,6 +28,7 @@
     </div>
 
     <button id="btnLibrary" class="btn" data-icon="book" title="Übungsbibliothek: alle Übungen"><span class="lbl">Bibliothek</span></button>
+    <button id="btnTrainings" class="btn" data-icon="calendar" title="Trainings: Übungen für einen Tag zusammenstellen"><span class="lbl">Trainings</span></button>
     <input id="title" class="title-input" type="text" placeholder="Unbenannte Übung – Namen eingeben" autocomplete="off">
     <span id="saveStatus" class="save-status"></span>
 
@@ -108,19 +109,34 @@
     </aside>
   </div>
 
+  <div id="trainingPrint" class="training-print"></div>
+
   <section id="library" class="library" hidden aria-label="Übungsbibliothek">
     <div class="lib-head">
       <h1>Übungsbibliothek</h1>
       <label class="lib-search" data-icon="search"><input id="libSearch" type="search" placeholder="Suchen: Name, Ziel, Notizen …" autocomplete="off"></label>
       <span class="spacer"></span>
       <button id="libImport" class="btn" data-icon="upload" title="Übung oder Backup (.json) importieren – vorhandene Übungen werden aktualisiert, nicht verdoppelt"><span class="lbl">Importieren</span></button>
-      <button id="libBackup" class="btn" data-icon="download" title="Alle Übungen als eine Datei sichern"><span class="lbl">Backup speichern</span></button>
+      <button id="libBackup" class="btn" data-icon="download" title="Alle Übungen und Trainings als eine Datei sichern"><span class="lbl">Backup speichern</span></button>
       <button id="libNew" class="btn primary" data-icon="plus"><span class="lbl">Neue Übung</span></button>
       <button id="libClose" class="btn icon" data-icon="close" title="Schließen (Esc)"></button>
     </div>
     <div id="libFilters" class="lib-filters"></div>
     <div id="libGrid" class="lib-grid"></div>
     <p class="lib-note">Die Übungen werden in diesem Browser gespeichert. Mach ab und zu ein <b>Backup</b> – z. B. bevor du Browserdaten löschst.</p>
+  </section>
+
+  <section id="trainings" class="library" hidden aria-label="Trainings">
+    <div class="lib-head tr-head">
+      <button id="trBack" class="btn icon" data-icon="back" title="Zurück zu allen Trainings" hidden></button>
+      <h1 id="trHeading">Trainings</h1>
+      <span id="trStatus" class="save-status error" hidden>Nicht gespeichert – Speicher voll?</span>
+      <span class="spacer"></span>
+      <button id="trPrint" class="btn" data-icon="printer" title="Ganzes Training drucken: Ablaufplan und alle Übungen" hidden><span class="lbl">Drucken</span></button>
+      <button id="trNew" class="btn primary" data-icon="plus"><span class="lbl">Neues Training</span></button>
+      <button id="trClose" class="btn icon" data-icon="close" title="Schließen (Esc)"></button>
+    </div>
+    <div id="trBody"></div>
   </section>
 
   <input id="fileInput" type="file" accept=".json,application/json" hidden>
@@ -130,6 +146,7 @@
   <script src="js/icons.js"></script>
   <script src="js/steps.js"></script>
   <script src="js/library.js"></script>
+  <script src="js/trainings.js"></script>
   <script src="js/app.js"></script>
 </body>
 </html>

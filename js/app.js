@@ -21,6 +21,7 @@
   /* ---------- Zustand ---------- */
 
   let library = { currentId: null, drills: [] };   // alle Übungen
+  let trainings = [];                                // zusammengestellte Trainings
   let state = emptyDrill();                          // die geöffnete Übung
   let selectedId = null;   // ausgewähltes Element
   let hoverId = null;      // in der Ablauf-Liste überfahrener Pfeil
@@ -116,6 +117,10 @@
     saveTimer = setTimeout(persist, 400);
   }
 
+  function saveTrainings() {
+    try { writeTrainings(trainings); setStatus(true); return true; } catch (e) { setStatus(false); return false; }
+  }
+
   /* ---------- Übungen öffnen, anlegen, löschen ---------- */
 
   function openDrill(drill, saveCurrent = true) {
@@ -152,8 +157,19 @@
     create() { openDrill(emptyDrill(state.fieldId)); },
     remove(id) {
       library.drills = library.drills.filter(d => d.id !== id);
+      // auch aus den Trainings nehmen, in denen sie eingeplant war
+      let changed = false;
+      for (const t of trainings) {
+        const n = t.entries.length;
+        t.entries = t.entries.filter(e => e.drillId !== id);
+        if (t.entries.length !== n) { t.updated = Date.now(); changed = true; }
+      }
+      if (changed) saveTrainings();
       if (id === state.id) openDrill(newestDrill() || emptyDrill(state.fieldId), false);
       else persist();
+    },
+    usedIn(id) {
+      return trainings.filter(t => t.entries.some(e => e.drillId === id)).length;
     },
     duplicate(id) {
       persist();
@@ -174,52 +190,54 @@
     exportAll() {
       persist();
       const date = new Date().toISOString().slice(0, 10);
-      download(new Blob([JSON.stringify(backupFileData(library.drills), null, 2)], { type: 'application/json' }), `Trainingsplaner-Backup-${date}.json`);
+      download(new Blob([JSON.stringify(backupFileData(library.drills, trainings), null, 2)], { type: 'application/json' }), `Trainingsplaner-Backup-${date}.json`);
     },
     importFile() { fileInput.click(); },
   };
 
-  // Import führt über die Kennung (id) zusammen: Vorhandene Übungen werden aktualisiert,
-  // wenn die importierte Version neuer ist – sonst übersprungen. So entstehen keine Doppelten.
+  // Führt über die Kennung (id) zusammen: Vorhandenes wird aktualisiert, wenn die
+  // importierte Version neuer ist – sonst übersprungen. So entstehen keine Doppelten.
+  function mergeById(list, incoming) {
+    const res = { added: [], updated: [], kept: [] };
+    for (const x of incoming) {
+      const idx = list.findIndex(y => y.id === x.id);
+      if (idx < 0) { list.push(x); res.added.push(x); }
+      else if (x.updated > list[idx].updated) { list[idx] = x; res.updated.push(x); }
+      else res.kept.push(x);
+    }
+    return res;
+  }
+
   fileInput.addEventListener('change', async () => {
     const file = fileInput.files[0];
     fileInput.value = '';
     if (!file) return;
-    let drills = [];
-    try { drills = parseImport(JSON.parse(await file.text())); } catch (e) { drills = []; }
-    if (!drills.length) {
+    let data = { drills: [], trainings: [] };
+    try { data = parseImport(JSON.parse(await file.text())); } catch (e) { /* bleibt leer */ }
+    const { drills } = data;
+    if (!drills.length && !data.trainings.length) {
       alert('Die Datei konnte nicht geladen werden. Ist es eine Übung oder ein Backup aus dem Trainingsplaner (.json)?');
       return;
     }
 
     persist();   // geöffnete Übung sichern, damit ihr Änderungsdatum stimmt
-    const added = [], updated = [], kept = [];
-    let openReplaced = null;
-    for (const d of drills) {
-      const idx = library.drills.findIndex(x => x.id === d.id);
-      if (idx < 0) {
-        library.drills.push(d);
-        added.push(d);
-      } else if (d.updated > library.drills[idx].updated) {
-        library.drills[idx] = d;
-        updated.push(d);
-        if (d.id === state.id) openReplaced = d;
-      } else {
-        kept.push(d);
-      }
-    }
+    const rd = mergeById(library.drills, drills);
+    const rt = mergeById(trainings, data.trainings);
+    if (rt.added.length || rt.updated.length) saveTrainings();
+    const openReplaced = rd.updated.find(d => d.id === state.id);
     if (openReplaced) openDrill(openReplaced, false); else persist();
 
-    if (drills.length === 1) {
-      if (kept.length) { alert('Diese Übung ist hier schon auf dem neuesten Stand – nichts geändert.'); return; }
+    if (drills.length === 1 && !data.trainings.length) {
+      if (rd.kept.length) { alert('Diese Übung ist hier schon auf dem neuesten Stand – nichts geändert.'); return; }
       if (drills[0].id !== state.id) openDrill(drills[0]);
       libraryView.close();
-      if (updated.length) alert('Übung aktualisiert (neuere Version importiert).');
+      if (rd.updated.length) alert('Übung aktualisiert (neuere Version importiert).');
       return;
     }
     libraryView.render();
-    alert(`Import abgeschlossen:\n• ${added.length} neu hinzugefügt\n• ${updated.length} aktualisiert (neuere Version)\n` +
-      `• ${kept.length} übersprungen (hier schon gleich oder neuer)`);
+    alert(`Import abgeschlossen:\n• ${rd.added.length} neu hinzugefügt\n• ${rd.updated.length} aktualisiert (neuere Version)\n` +
+      `• ${rd.kept.length} übersprungen (hier schon gleich oder neuer)` +
+      (data.trainings.length ? `\nTrainings: ${rt.added.length} neu, ${rt.updated.length} aktualisiert, ${rt.kept.length} übersprungen` : ''));
   });
 
   /* ---------- Darstellung ---------- */
@@ -790,6 +808,10 @@
       if (e.key === 'Escape') libraryView.close();
       return;
     }
+    if (trainingsView.isOpen()) {
+      if (e.key === 'Escape') trainingsView.close();
+      return;
+    }
     if (typing) {
       if ((e.key === 'Enter' || e.key === 'Escape') && (target.dataset.prop || target.dataset.note)) target.blur();
       return;
@@ -832,19 +854,6 @@
     a.click();
     a.remove();
     setTimeout(() => URL.revokeObjectURL(a.href), 2000);
-  }
-
-  // Ablauf, Aufbau und Coaching-Punkte für Bild und Druck
-  function infoBlocks() {
-    const blocks = [];
-    const groups = stepGroups(state.items);
-    if (groups.length) {
-      blocks.push({ heading: 'Ablauf', steps: groups.map(g => ({ n: g.step, multi: g.arrows.length > 1, lines: g.arrows.map(a => stepText(state.items, a)) })) });
-    }
-    if (state.setup.trim()) blocks.push({ heading: 'Aufbau', text: state.setup.trim() });
-    const points = state.coaching.split('\n').map(s => s.replace(/^\s*[-•*]\s*/, '').trim()).filter(Boolean);
-    if (points.length) blocks.push({ heading: 'Coaching-Punkte', bullets: points });
-    return blocks;
   }
 
   function wrapText(c, text, maxW) {
@@ -933,7 +942,7 @@
     const W = f.width, PAD = 28, scale = 2;
     const title = state.title.trim(), meta = metaLine(state);
     const head = (title ? 58 : 0) + (meta ? 32 : 0) + (title || meta ? 14 : 0);
-    const blocks = infoBlocks();
+    const blocks = drillInfoBlocks(state);
     const measure = document.createElement('canvas').getContext('2d');
     const infoH = blocks.length ? drawInfo(measure, blocks, PAD, PAD, W - 2 * PAD, false) : 0;
 
@@ -965,14 +974,7 @@
   function fillPrint() {
     $('printTitle').textContent = state.title || '';
     $('printMeta').textContent = metaLine(state);
-    $('printInfo').innerHTML = infoBlocks().map(b => `<section><h2>${esc(b.heading)}</h2>` + (
-      b.steps
-        ? `<ol class="p-steps">${b.steps.map(s => `<li><span class="p-badge">${s.n}</span><div>${s.lines.map(l => `<div>${esc(l)}</div>`).join('')}` +
-          `${s.multi ? '<div class="p-muted">(gleichzeitig)</div>' : ''}</div></li>`).join('')}</ol>`
-        : b.text
-          ? `<p>${esc(b.text).replace(/\n/g, '<br>')}</p>`
-          : `<ul>${b.bullets.map(t => `<li>${esc(t)}</li>`).join('')}</ul>`
-    ) + `</section>`).join('');
+    $('printInfo').innerHTML = infoBlocksHtml(drillInfoBlocks(state));
   }
   window.addEventListener('beforeprint', fillPrint);
 
@@ -982,6 +984,7 @@
   $('btnRedo').addEventListener('click', redo);
   $('btnNew').addEventListener('click', () => libraryApi.create());
   $('btnLibrary').addEventListener('click', () => libraryView.open());
+  $('btnTrainings').addEventListener('click', () => trainingsView.open());
   $('btnPng').addEventListener('click', exportPng);
   $('btnPrint').addEventListener('click', () => { select(null); window.print(); });
   $('btnPanel').addEventListener('click', () => setPanel(document.body.classList.contains('panel-closed')));
@@ -996,11 +999,19 @@
   /* ---------- Start ---------- */
 
   const libraryView = createLibraryView(libraryApi);
+  const trainingsView = createTrainingsView({
+    get drills() { return library.drills; },
+    get trainings() { return trainings; },
+    flush: persist,
+    save: saveTrainings,
+    openDrill: id => libraryApi.open(id),
+  });
 
   document.querySelectorAll('[data-icon]').forEach(el => el.insertAdjacentHTML('afterbegin', icon(el.dataset.icon)));
   $('goalList').innerHTML = GOALS.map(g => `<option value="${esc(g)}">`).join('');
 
   library = loadLibrary();
+  trainings = loadTrainings();
   const current = library.drills.find(d => d.id === library.currentId) || newestDrill();
   state = current ? clone(current) : emptyDrill();
   lastContent = drillContent(state);

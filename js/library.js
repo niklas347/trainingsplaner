@@ -7,14 +7,14 @@
 const LIB_KEY = 'trainingsplaner.library.v1';
 const OLD_KEY = 'trainingsplaner.v1';   // Version 1: nur eine einzelne Übung
 
-const CATEGORIES = ['Aufwärmen', 'Technik', 'Taktik', 'Spielform', 'Athletik'];
+const CATEGORIES = ['Aufwärmen', 'Technik', 'Taktik', 'Torschuss', 'Spielform', 'Athletik'];
 const GOALS = ['Passspiel', 'Dribbling', 'Torschuss', 'Ballannahme', 'Umschalten', 'Ballgewinn', 'Kopfball', 'Zweikampf', 'Positionsspiel', 'Koordination'];
 const INTENSITIES = ['niedrig', 'mittel', 'hoch'];
 const META_FIELDS = ['category', 'goal', 'players', 'duration', 'intensity', 'setup', 'coaching'];
 
 const HEX = /^#[0-9a-f]{6}$/i;
 const validId = v => typeof v === 'string' && /^[\w-]{1,40}$/.test(v);
-const newId =() => 'd' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+const newId = (prefix = 'd') => prefix + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 const itemId = () => 'i' + Date.now().toString(36).slice(-5) + Math.random().toString(36).slice(2, 7);
 
 function emptyDrill(fieldId) {
@@ -106,25 +106,114 @@ function writeLibrary(lib) {
   try { localStorage.removeItem(OLD_KEY); } catch (e) { /* egal */ }
 }
 
-// Akzeptiert: einzelne Übung (neu oder Version 1) oder ein komplettes Backup
+/* ---------- Trainings: mehrere Übungen für einen Tag ----------
+   Eigener Speicherplatz, damit ältere App-Versionen sie beim Speichern nicht verlieren.
+   Einträge verweisen nur per drillId auf die Übung (keine Kopie). */
+
+const TRAIN_KEY = 'trainingsplaner.trainings.v1';
+const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/;
+
+const pad2 = n => String(n).padStart(2, '0');
+const isoDay = (d = new Date()) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+const dayDate = iso => { const [y, m, d] = iso.split('-').map(Number); return new Date(y, m - 1, d); };
+const shortDay = iso => { const d = dayDate(iso); return `${pad2(d.getDate())}.${pad2(d.getMonth() + 1)}.`; };
+const trainingName = t => t.title.trim() || `Training am ${shortDay(t.date)}`;
+const trainingMinutes = t => t.entries.reduce((s, e) => s + (e.minutes || 0), 0);
+
+// "15-20 min" → 15 (Vorschlag beim Hinzufügen, danach frei änderbar)
+function parseMinutes(s) {
+  const m = String(s || '').match(/\d+/);
+  return m ? Math.min(300, Number(m[0])) : 0;
+}
+
+function emptyTraining() {
+  const now = Date.now();
+  return { id: newId('t'), title: '', date: isoDay(), notes: '', entries: [], created: now, updated: now };
+}
+
+function sanitizeTraining(t) {
+  if (!t || typeof t !== 'object' || !Array.isArray(t.entries)) return null;
+  const str = (v, max) => (typeof v === 'string' ? v.slice(0, max) : '');
+  return {
+    id: validId(t.id) ? t.id : newId('t'),
+    title: str(t.title, 120),
+    date: ISO_DAY.test(t.date) ? t.date : isoDay(),
+    notes: str(t.notes, 4000),
+    entries: t.entries.filter(e => e && validId(e.drillId)).slice(0, 40)
+      .map(e => ({ drillId: e.drillId, minutes: Math.min(300, Math.max(0, Math.round(Number(e.minutes) || 0))) })),
+    created: Number(t.created) || Date.now(),
+    updated: Number(t.updated) || Date.now(),
+  };
+}
+
+function loadTrainings() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(TRAIN_KEY));
+    if (raw && Array.isArray(raw.trainings)) return raw.trainings.map(sanitizeTraining).filter(Boolean);
+  } catch (e) { /* kein Zugriff */ }
+  return [];
+}
+
+// Wirft bei vollem oder gesperrtem Speicher – der Aufrufer zeigt das an
+function writeTrainings(list) {
+  localStorage.setItem(TRAIN_KEY, JSON.stringify({ trainings: list }));
+}
+
+// Akzeptiert: einzelne Übung (neu oder Version 1) oder ein komplettes Backup (ggf. mit Trainings)
 function parseImport(data) {
-  if (!data || typeof data !== 'object') return [];
+  const out = { drills: [], trainings: [] };
+  if (!data || typeof data !== 'object') return out;
   const legacy = !(data.version >= 2);
-  if (Array.isArray(data.drills)) return data.drills.map(d => sanitizeDrill(d, legacy)).filter(Boolean);
-  const d = sanitizeDrill(data, legacy);
-  return d ? [d] : [];
+  if (Array.isArray(data.trainings)) out.trainings = data.trainings.map(sanitizeTraining).filter(Boolean);
+  if (Array.isArray(data.drills)) {
+    out.drills = data.drills.map(d => sanitizeDrill(d, legacy)).filter(Boolean);
+  } else {
+    const d = sanitizeDrill(data, legacy);
+    if (d) out.drills.push(d);
+  }
+  return out;
 }
 
 const drillFileData = d => ({ app: 'trainingsplaner', version: 2, ...d });
-const backupFileData = drills => ({ app: 'trainingsplaner', version: 2, type: 'backup', exported: Date.now(), drills });
+const backupFileData = (drills, trainings = []) => ({ app: 'trainingsplaner', version: 2, type: 'backup', exported: Date.now(), drills, trainings });
 
 function metaLine(d) {
   return [d.category, d.goal, d.players && `${d.players} Spieler`, d.duration, d.intensity && `Intensität ${d.intensity}`]
     .filter(Boolean).join(' · ');
 }
 
+// Ablauf, Aufbau und Coaching-Punkte einer Übung für Bild und Druck
+function drillInfoBlocks(d) {
+  const blocks = [];
+  const groups = stepGroups(d.items);
+  if (groups.length) {
+    blocks.push({ heading: 'Ablauf', steps: groups.map(g => ({ n: g.step, multi: g.arrows.length > 1, lines: g.arrows.map(a => stepText(d.items, a)) })) });
+  }
+  if (d.setup.trim()) blocks.push({ heading: 'Aufbau', text: d.setup.trim() });
+  const points = d.coaching.split('\n').map(s => s.replace(/^\s*[-•*]\s*/, '').trim()).filter(Boolean);
+  if (points.length) blocks.push({ heading: 'Coaching-Punkte', bullets: points });
+  return blocks;
+}
+
+function infoBlocksHtml(blocks) {
+  return blocks.map(b => `<section><h2>${esc(b.heading)}</h2>` + (
+    b.steps
+      ? `<ol class="p-steps">${b.steps.map(s => `<li><span class="p-badge">${s.n}</span><div>${s.lines.map(l => `<div>${esc(l)}</div>`).join('')}` +
+        `${s.multi ? '<div class="p-muted">(gleichzeitig)</div>' : ''}</div></li>`).join('')}</ol>`
+      : b.text
+        ? `<p>${esc(b.text).replace(/\n/g, '<br>')}</p>`
+        : `<ul>${b.bullets.map(t => `<li>${esc(t)}</li>`).join('')}</ul>`
+  ) + `</section>`).join('');
+}
+
+// Vorschaubild einer Übung (Feld + Elemente) für Karten und Listen
+function drillThumb(d) {
+  const f = FIELD_MAP[d.fieldId] || FIELDS[0];
+  return `<svg viewBox="0 0 ${f.width} ${f.height}" aria-hidden="true">${f.svg}${renderItemsMarkup(d.items)}</svg>`;
+}
+
 /* ---------- Übersichtsseite ----------
-   api: { drills, currentId, flush(), open(id), create(), remove(id), duplicate(id), exportDrill(id), exportAll(), importFile() } */
+   api: { drills, currentId, flush(), open(id), create(), remove(id), duplicate(id), usedIn(id), exportDrill(id), exportAll(), importFile() } */
 
 function createLibraryView(api) {
   const root = document.getElementById('library');
@@ -134,11 +223,6 @@ function createLibraryView(api) {
   let category = '';
 
   const fmtDate = ts => new Date(ts).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' });
-
-  function thumb(d) {
-    const f = FIELD_MAP[d.fieldId] || FIELDS[0];
-    return `<svg viewBox="0 0 ${f.width} ${f.height}" aria-hidden="true">${f.svg}${renderItemsMarkup(d.items)}</svg>`;
-  }
 
   function matches(d, q) {
     if (category && (d.category || '') !== category) return false;
@@ -174,7 +258,7 @@ function createLibraryView(api) {
       const steps = stepGroups(d.items).length;
       const info = [d.duration, steps ? `${steps} Schritt${steps === 1 ? '' : 'e'}` : '', `geändert ${fmtDate(d.updated)}`].filter(Boolean).join(' · ');
       return `<article class="card${d.id === api.currentId ? ' current' : ''}" data-id="${d.id}" tabindex="0">` +
-        `<div class="thumb">${thumb(d)}${d.id === api.currentId ? '<span class="badge-open">geöffnet</span>' : ''}</div>` +
+        `<div class="thumb">${drillThumb(d)}${d.id === api.currentId ? '<span class="badge-open">geöffnet</span>' : ''}</div>` +
         `<div class="card-body"><h3>${esc(d.title || 'Unbenannte Übung')}</h3>` +
         `<div class="card-tags">${d.category ? `<span class="tag">${esc(d.category)}</span>` : ''}${d.goal ? `<span class="tag light">${esc(d.goal)}</span>` : ''}</div>` +
         `<p class="card-info">${esc(info)}</p></div>` +
@@ -209,7 +293,9 @@ function createLibraryView(api) {
     else if (act === 'export') api.exportDrill(id);
     else if (act === 'remove') {
       const d = api.drills.find(x => x.id === id);
-      if (!d || !confirm(`„${d.title || 'Unbenannte Übung'}“ wirklich löschen? Das kann nicht rückgängig gemacht werden.`)) return;
+      const n = d ? api.usedIn(id) : 0;
+      const where = n ? ` Sie ist in ${n === 1 ? 'einem Training' : `${n} Trainings`} eingeplant und wird dort entfernt.` : '';
+      if (!d || !confirm(`„${d.title || 'Unbenannte Übung'}“ wirklich löschen?${where} Das kann nicht rückgängig gemacht werden.`)) return;
       api.remove(id);
     }
     render();
